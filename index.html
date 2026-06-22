@@ -97,6 +97,9 @@
     <label>cycles (AC)</label>
   </div>
   <button onclick="simulate()">▶ Simuler</button>
+  <div class="grp">
+    <label><input type="checkbox" id="showLeaves" onchange="onSlider()"> Feuilles</label>
+  </div>
   <div id="info"></div>
 </div>
 
@@ -276,6 +279,8 @@ function renderAutomaton() {
 // ════════════════════════════════════════════
 let nodeCount = 0;
 let fixedTransform = null;   // échelle figée, calculée sur la plante la plus âgée
+let DISPLAY_CA = 0;          // âge chronologique actuellement affiché
+let LEAF_ON = false;         // afficher les feuilles ?
 
 function buildAxis(pa, birthCA, maxCA) {
   if (pa === 0 || pa > state.numPA || nodeCount > MAX_NODES) return null;
@@ -289,7 +294,7 @@ function buildAxis(pa, birthCA, maxCA) {
     // phytomères sans bourgeon (base de l'UC)
     for (let b = 0; b < c.bare; b++) {
       if (nodeCount++ > MAX_NODES) break;
-      axis.phytomers.push({ axillary: null });
+      axis.phytomers.push({ axillary: null, ca });
     }
     // phytomères portant un bourgeon AP j : du plus âgé (AP élevé) vers le plus jeune,
     // empilés de la base vers le sommet de l'UC
@@ -297,7 +302,7 @@ function buildAxis(pa, birthCA, maxCA) {
       const cnt = c.bears[j] || 0;
       for (let k = 0; k < cnt; k++) {
         if (nodeCount++ > MAX_NODES) break;
-        axis.phytomers.push({ axillary: buildAxis(j, ca, maxCA) });
+        axis.phytomers.push({ axillary: buildAxis(j, ca, maxCA), ca });
       }
     }
     // marque la fin de l'UC sur le dernier phytomère produit ce cycle
@@ -313,37 +318,52 @@ function buildAxis(pa, birthCA, maxCA) {
   return axis;
 }
 
-function layoutAxis(axis, x, y, angle, edges, ticks) {
+// un axe (et ses prolongements par métamorphose) reste vivant tant qu'il porte
+// une feuille vivante à son extrémité — on remonte la chaîne des continuations,
+// mais PAS les branches latérales (axillaires)
+function axisAlive(axis) {
+  if (!axis) return false;
+  if (axis.phytomers.some(ph => ph.ca === DISPLAY_CA)) return true;
+  return axisAlive(axis.continuation);
+}
+
+function layoutAxis(axis, x, y, angle, edges, ticks, leaves) {
   const segLen = SEG_LEN[Math.min(axis.pa - 1, SEG_LEN.length - 1)];
   const rad = angle * Math.PI / 180;
   const perpX = Math.cos(rad), perpY = Math.sin(rad);   // perpendiculaire à l'axe
-  let cx = x, cy = y, k = 0;
+  // vivant si l'axe — ou sa prolongation (continuation) — porte encore une feuille vivante
+  const alive = axisAlive(axis);
+  let cx = x, cy = y, k = 0, pi = 0;
   for (const ph of axis.phytomers) {
     const nx = cx + Math.sin(rad) * segLen;
     const ny = cy - Math.cos(rad) * segLen;
-    edges.push({ x1: cx, y1: cy, x2: nx, y2: ny, pa: axis.pa });
+    edges.push({ x1: cx, y1: cy, x2: nx, y2: ny, pa: axis.pa, alive });
     // trait de séparation au sommet du phytomère
     const hl = segLen * (ph.ucEnd ? 0.20 : 0.12);
     ticks.push({ x1: nx - perpX*hl, y1: ny - perpY*hl,
-                 x2: nx + perpX*hl, y2: ny + perpY*hl, uc: !!ph.ucEnd });
+                 x2: nx + perpX*hl, y2: ny + perpY*hl, uc: !!ph.ucEnd, alive });
+    // feuille au nœud, uniquement sur la dernière UC apparue
+    if (LEAF_ON && ph.ca === DISPLAY_CA)
+      leaves.push({ x: nx, y: ny, rad, size: segLen, side: (pi % 2 === 0) ? 1 : -1 });
     if (ph.axillary) {
       const side = (k % 2 === 0) ? -1 : 1;     // alternance gauche/droite => équilibre
       const delta = BR_ANGLE[Math.min(ph.axillary.pa - 1, BR_ANGLE.length - 1)];
-      layoutAxis(ph.axillary, nx, ny, angle + side * delta, edges, ticks);
+      layoutAxis(ph.axillary, nx, ny, angle + side * delta, edges, ticks, leaves);
       k++;
     }
-    cx = nx; cy = ny;
+    cx = nx; cy = ny; pi++;
   }
-  if (axis.continuation) layoutAxis(axis.continuation, cx, cy, angle, edges, ticks);
+  if (axis.continuation) layoutAxis(axis.continuation, cx, cy, angle, edges, ticks, leaves);
 }
 
 // construit arêtes + marques pour un âge donné
 function buildPlant(maxCA) {
   nodeCount = 0;
+  DISPLAY_CA = maxCA;
   const root = buildAxis(1, 0, maxCA);
-  const edges = [], ticks = [];
-  if (root) layoutAxis(root, 0, 0, 0, edges, ticks);
-  return { edges, ticks, count: nodeCount, truncated: nodeCount > MAX_NODES };
+  const edges = [], ticks = [], leaves = [];
+  if (root) layoutAxis(root, 0, 0, 0, edges, ticks, leaves);
+  return { edges, ticks, leaves, count: nodeCount, truncated: nodeCount > MAX_NODES };
 }
 
 // calcule l'échelle UNE fois, sur la plante la plus âgée
@@ -362,7 +382,8 @@ function computeTransform() {
 function renderPlant(ca) {
   const svg = document.getElementById('svgPlant');
   if (!fixedTransform) computeTransform();
-  const { edges, ticks, count, truncated } = buildPlant(ca);
+  LEAF_ON = document.getElementById('showLeaves').checked;
+  const { edges, ticks, leaves, count, truncated } = buildPlant(ca);
 
   document.getElementById('info').textContent =
     truncated ? `⚠ tronqué (>${MAX_NODES} phytomères)`
@@ -371,22 +392,41 @@ function renderPlant(ca) {
   if (!edges.length) { svg.innerHTML = ''; return; }
 
   const { sc, offX, offY } = fixedTransform;
+  const DEAD = 0.28;   // opacité des axes sans feuille vivante
   const tx = v => (v*sc+offX).toFixed(1);
   const ty = v => (v*sc+offY).toFixed(1);
 
-  // 1) internodes (couleur par AP)
+  // 1) internodes (couleur par AP) — estompés si l'axe n'a plus de feuille vivante
   let h = '';
   for (const e of edges) {
     const w = Math.max(0.4, STROKE[Math.min(e.pa-1, STROKE.length-1)]);
     h += `<line x1="${tx(e.x1)}" y1="${ty(e.y1)}" x2="${tx(e.x2)}" y2="${ty(e.y2)}"
-            stroke="${PA_COLORS[e.pa-1]}" stroke-width="${w}" stroke-linecap="round"/>`;
+            stroke="${PA_COLORS[e.pa-1]}" stroke-width="${w}" stroke-linecap="round"
+            stroke-opacity="${e.alive ? 1 : DEAD}"/>`;
   }
   // 2) marques : gris = séparation de phytomères, noir = séparation d'UC
   for (const t of ticks) {
     const col = t.uc ? '#111' : '#999';
     const w   = t.uc ? 1.8 : 1.0;
     h += `<line x1="${tx(t.x1)}" y1="${ty(t.y1)}" x2="${tx(t.x2)}" y2="${ty(t.y2)}"
-            stroke="${col}" stroke-width="${w}" stroke-linecap="round"/>`;
+            stroke="${col}" stroke-width="${w}" stroke-linecap="round"
+            stroke-opacity="${t.alive ? 1 : DEAD}"/>`;
+  }
+  // 3) feuilles (sur la dernière UC apparue seulement)
+  for (const lf of leaves) {
+    const sx = +tx(lf.x), sy = +ty(lf.y);
+    const bdx = Math.sin(lf.rad), bdy = -Math.cos(lf.rad);          // direction de l'axe (écran)
+    const branchDeg = Math.atan2(bdy, bdx) * 180 / Math.PI;
+    const leafDeg = branchDeg + lf.side * 40;                       // inclinaison de la feuille
+    const bl = Math.max(5, lf.size * sc * 0.85);                    // longueur du limbe
+    const bw = bl * 0.45;                                           // largeur du limbe
+    const r = leafDeg * Math.PI / 180;
+    const ecx = (sx + Math.cos(r) * bl * 0.55).toFixed(1);
+    const ecy = (sy + Math.sin(r) * bl * 0.55).toFixed(1);
+    h += `<line x1="${sx}" y1="${sy}" x2="${ecx}" y2="${ecy}" stroke="#2e7d32" stroke-width="0.7"/>`;
+    h += `<ellipse cx="${ecx}" cy="${ecy}" rx="${(bl*0.5).toFixed(1)}" ry="${(bw*0.5).toFixed(1)}"
+            transform="rotate(${leafDeg.toFixed(1)} ${ecx} ${ecy})"
+            fill="#4caf50" fill-opacity="0.9" stroke="#2e7d32" stroke-width="0.4"/>`;
   }
   svg.innerHTML = h;
 }
