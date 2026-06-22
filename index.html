@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GREENLAB — Automate double-échelle</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f4f0; color: #333;
+           height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    header { background: #2e7d32; color: white; padding: 9px 18px; flex-shrink: 0;
+             display: flex; align-items: baseline; gap: 16px; }
+    header h1 { font-size: 1.05em; font-weight: 700; }
+    header p  { font-size: 0.78em; opacity: 0.78; }
+
+    /* ── Toolbar ── */
+    .toolbar { background: white; border-bottom: 1px solid #ddd; padding: 8px 16px;
+               display: flex; align-items: center; gap: 18px; flex-shrink: 0; flex-wrap: wrap; }
+    .toolbar .grp { display: flex; align-items: center; gap: 6px; }
+    .toolbar label { font-size: 0.82em; color: #555; }
+    .toolbar input[type=number] { width: 56px; padding: 4px 6px; border: 1px solid #ccc;
+                                   border-radius: 4px; font-size: 0.85em; text-align: center; }
+    .toolbar button { background: #2e7d32; color: white; border: none; padding: 7px 18px;
+                      border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+    .toolbar button:hover { background: #1b5e20; }
+    #info { font-size: 0.78em; color: #777; margin-left: auto; }
+
+    /* ── Panels ── */
+    .panels { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .panel { display: flex; flex-direction: column; padding: 4px 10px; overflow: hidden; }
+    .panel-aut   { flex: 0 0 46%; border-bottom: 2px solid #e0e0e0; }
+    .panel-plant { flex: 1; }
+    .panel-title { font-size: 0.72em; font-weight: 700; text-transform: uppercase;
+                   letter-spacing: .06em; color: #999; margin: 2px 0 2px 2px; }
+
+    .scroll-x { flex: 1; overflow: auto; }
+    svg { display: block; }
+    #svgAut   { height: 100%; min-width: 100%; }
+    #svgPlant { width: 100%; height: 100%; }
+
+    /* inputs inside the automaton (foreignObject) */
+    .fo-input { width: 100%; height: 100%; border: 1px solid #bbb; border-radius: 5px;
+                text-align: center; font-size: 15px; font-family: inherit; background: white; }
+    .fo-input:focus { outline: 2px solid #2e7d32; border-color: #2e7d32; }
+    .fo-select { width: 100%; height: 100%; border: 1px solid #bbb; border-radius: 5px;
+                 font-size: 13px; font-family: inherit; background: white; text-align: center; }
+
+    /* legends */
+    .legend { display: flex; flex-wrap: wrap; gap: 5px 16px; padding: 3px 10px; flex-shrink: 0; }
+    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.76em; color: #555; }
+    .legend-line { width: 18px; height: 4px; border-radius: 2px; }
+
+    /* AC slider */
+    .ca-bar { flex-shrink: 0; background: #fafafa; border-top: 1px solid #ddd;
+              padding: 7px 16px; display: flex; align-items: center; gap: 12px; }
+    .ca-bar label { font-size: 0.82em; color: #555; white-space: nowrap; }
+    .ca-bar input[type=range] { flex: 1; }
+    .ca-bar .ca-val { font-size: 0.9em; font-weight: 700; color: #2e7d32; width: 26px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>GREENLAB — Automate double-échelle</h1>
+  <p>D'après Yan et al., <em>Annals of Botany</em> 2004 — Figure 1</p>
+</header>
+
+<!-- ════════ TOOLBAR ════════ -->
+<div class="toolbar">
+  <div class="grp">
+    <label>Niveaux d'AP</label>
+    <input type="number" id="numPA" min="1" max="5" value="3" onchange="onNumPA()">
+  </div>
+  <div class="grp">
+    <label>t =</label>
+    <input type="number" id="maxCA" min="1" max="40" value="10" onchange="onMaxCA()">
+    <label>cycles (AC)</label>
+  </div>
+  <button onclick="simulate()">▶ Simuler</button>
+  <div id="info"></div>
+</div>
+
+<div class="panels">
+
+  <!-- ════════ AUTOMATE ════════ -->
+  <div class="panel panel-aut">
+    <div class="panel-title">Automate double-échelle — paramètres</div>
+    <div class="scroll-x"><svg id="svgAut" preserveAspectRatio="xMinYMid meet"></svg></div>
+    <div id="legendAut" class="legend"></div>
+  </div>
+
+  <!-- ════════ PLANTE ════════ -->
+  <div class="panel panel-plant">
+    <div class="panel-title">Structure de la plante simulée</div>
+    <div id="legendPlant" class="legend"></div>
+    <svg id="svgPlant" viewBox="0 0 800 440" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+
+  <!-- AC slider -->
+  <div class="ca-bar">
+    <label>Âge chronologique (AC) :</label>
+    <input type="range" id="caSlider" min="1" max="10" value="10" oninput="onSlider()">
+    <span class="ca-val" id="caVal">10</span>
+  </div>
+
+</div>
+
+<script>
+// ════════════════════════════════════════════
+//  PALETTE & CONSTANTES
+// ════════════════════════════════════════════
+const PA_COLORS = ['#1565C0','#2E7D32','#C62828','#E65100','#6A1B9A']; // bleu, vert, rouge, orange, violet
+const PA_LIGHT  = ['#64B5F6','#81C784','#E57373','#FFB74D','#BA68C8'];
+
+// plante
+const SEG_LEN   = [34, 24, 16, 11, 8];     // longueur d'internode par AP
+const BR_ANGLE  = [0, 52, 44, 38, 32];     // angle de branche / axe parent
+const STROKE    = [4, 2.6, 1.7, 1.1, 0.7];
+const MAX_NODES = 8000;
+const VB_W = 800, VB_H = 440;
+
+// ════════════════════════════════════════════
+//  ÉTAT
+// ════════════════════════════════════════════
+const DEFAULTS = [
+  { micro:1, macro:10, terminal:0, axillary:2 },  // AP1 : tronc, porte AP2
+  { micro:2, macro:4,  terminal:3, axillary:3 },  // AP2 : branche, porte AP3, se métamorphose en AP3
+  { micro:1, macro:2,  terminal:0, axillary:0 },  // AP3 : rameau terminal
+  { micro:1, macro:2,  terminal:0, axillary:0 },
+  { micro:1, macro:1,  terminal:0, axillary:0 },
+];
+
+let state = { numPA: 3, maxCA: 10, pa: [] };
+
+function initState() {
+  state.numPA = parseInt(document.getElementById('numPA').value);
+  state.maxCA = parseInt(document.getElementById('maxCA').value);
+  state.pa = [];
+  for (let i = 0; i < state.numPA; i++) {
+    const d = DEFAULTS[i] || { micro:1, macro:2, terminal:0, axillary:0 };
+    state.pa.push({ ...d });
+  }
+}
+
+// ════════════════════════════════════════════
+//  HANDLERS
+// ════════════════════════════════════════════
+function onNumPA() {
+  const n = Math.max(1, Math.min(5, parseInt(document.getElementById('numPA').value) || 1));
+  document.getElementById('numPA').value = n;
+  // ajuste le tableau d'état en conservant l'existant
+  if (n > state.pa.length) {
+    for (let i = state.pa.length; i < n; i++)
+      state.pa.push({ ...(DEFAULTS[i] || { micro:1, macro:2, terminal:0, axillary:0 }) });
+  } else {
+    state.pa.length = n;
+    // nettoie les cibles devenues invalides
+    state.pa.forEach(p => {
+      if (p.terminal > n) p.terminal = 0;
+      if (p.axillary > n) p.axillary = 0;
+    });
+  }
+  state.numPA = n;
+  renderAutomaton();
+  renderLegends();
+  simulate();
+}
+function onMaxCA() {
+  state.maxCA = Math.max(1, Math.min(40, parseInt(document.getElementById('maxCA').value) || 1));
+  document.getElementById('maxCA').value = state.maxCA;
+  syncSlider();
+  simulate();
+}
+function setMicro(i, v){ state.pa[i].micro = Math.max(1, parseInt(v)||1); }
+function setMacro(i, v){ state.pa[i].macro = Math.max(1, parseInt(v)||1); }
+function setTerm(i, v){ state.pa[i].terminal = parseInt(v); renderAutomaton(); }
+function setAxil(i, v){ state.pa[i].axillary = parseInt(v); renderAutomaton(); renderLegends(); }
+
+function syncSlider() {
+  const s = document.getElementById('caSlider');
+  s.max = state.maxCA;
+  if (parseInt(s.value) > state.maxCA) s.value = state.maxCA;
+  document.getElementById('caVal').textContent = s.value;
+}
+function onSlider() {
+  document.getElementById('caVal').textContent = document.getElementById('caSlider').value;
+  renderPlant(parseInt(document.getElementById('caSlider').value));
+}
+
+// ════════════════════════════════════════════
+//  RENDU DE L'AUTOMATE  (style ellipses / micro-états)
+// ════════════════════════════════════════════
+function renderAutomaton() {
+  const n = state.numPA;
+  const CW = 360, H = 560;
+  const W = n * CW;
+  const cy = 270, rx = 162, ry = 222;
+  const cxOf = i => i * CW + CW / 2;
+
+  const optList = (val, withNone, noneLabel) => {
+    let o = withNone ? `<option value="0" ${val===0?'selected':''}>${noneLabel}</option>` : '';
+    for (let j = 1; j <= n; j++) o += `<option value="${j}" ${val===j?'selected':''}>AP${j}</option>`;
+    return o;
+  };
+
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    <defs>
+      <marker id="arrT" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#444"/></marker>
+      <marker id="arrS" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L7,3 z" fill="#888"/></marker>
+    </defs>`;
+
+  for (let i = 0; i < n; i++) {
+    const c = state.pa[i];
+    const cx = cxOf(i);
+    const col = PA_COLORS[i], light = PA_LIGHT[i];
+    const axCol = c.axillary > 0 ? PA_COLORS[c.axillary - 1] : '#bbb';
+
+    // ellipse (macro-état)
+    s += `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="white" stroke="#aaa" stroke-width="1.5"/>`;
+    s += `<text x="${cx}" y="42" text-anchor="middle" font-size="22" font-weight="700" fill="${col}">AP ${i+1}</text>`;
+
+    // boucle "séjours" (répétition du macro-état)
+    s += `<path d="M${cx+34},78 Q${cx},52 ${cx-34},78" fill="none" stroke="#888" stroke-width="1.5" marker-end="url(#arrT)"/>`;
+    s += `<text x="${cx}" y="108" text-anchor="middle" font-size="13" fill="#555">séjours (UC/axe)</text>`;
+    s += `<foreignObject x="${cx-35}" y="116" width="70" height="34">
+            <input xmlns="http://www.w3.org/1999/xhtml" class="fo-input" type="number" min="1" max="30"
+                   value="${c.macro}" oninput="setMacro(${i}, this.value)"></foreignObject>`;
+
+    // deux micro-états (cercles pointillés)
+    const my = cy + 18;
+    const lx = cx - 78, rxc = cx + 78, mr = 78;
+    s += `<circle cx="${lx}" cy="${my}" r="${mr}" fill="none" stroke="#ccc" stroke-width="1.3" stroke-dasharray="4,4"/>`;
+    s += `<circle cx="${rxc}" cy="${my}" r="${mr}" fill="none" stroke="#ccc" stroke-width="1.3" stroke-dasharray="4,4"/>`;
+    s += `<path d="M${lx+40},${my} L${rxc-46},${my}" stroke="#999" stroke-width="1.4" marker-end="url(#arrS)"/>`;
+
+    // glyphe porteur (internode vertical, couleur AP courant)
+    const drawCarrier = (gx) => {
+      let g = `<rect x="${gx-5}" y="${my-34}" width="10" height="68" rx="4" fill="${col}"/>`;
+      g += `<circle cx="${gx}" cy="${my-34}" r="5" fill="${light}"/>`;
+      return g;
+    };
+    s += drawCarrier(lx);
+    s += drawCarrier(rxc);
+    // porté : branche horizontale (couleur AP axillaire) sur le micro-état de droite
+    if (c.axillary > 0) {
+      s += `<rect x="${rxc+5}" y="${my-39}" width="46" height="9" rx="4" fill="${axCol}"/>`;
+      s += `<circle cx="${rxc+51}" cy="${my-34}" r="4.5" fill="${PA_LIGHT[c.axillary-1]}"/>`;
+    }
+
+    // "× N" (phytomères / UC) sous le micro-état gauche
+    s += `<text x="${lx}" y="${my+mr+20}" text-anchor="middle" font-size="12" fill="#555">phytomères/UC</text>`;
+    s += `<foreignObject x="${lx-32}" y="${my+mr+26}" width="64" height="32">
+            <input xmlns="http://www.w3.org/1999/xhtml" class="fo-input" type="number" min="1" max="10"
+                   value="${c.micro}" oninput="setMicro(${i}, this.value)"></foreignObject>`;
+
+    // cible axillaire sous le micro-état droit
+    s += `<text x="${rxc}" y="${my+mr+20}" text-anchor="middle" font-size="12" fill="#555">bourgeon axillaire</text>`;
+    s += `<foreignObject x="${rxc-46}" y="${my+mr+26}" width="92" height="32">
+            <select xmlns="http://www.w3.org/1999/xhtml" class="fo-select" onchange="setAxil(${i}, this.value)">
+              ${optList(c.axillary, true, 'sans axil.')}</select></foreignObject>`;
+
+    // transition terminale (sous l'ellipse, centrée)
+    s += `<text x="${cx}" y="${cy+ry+8}" text-anchor="middle" font-size="12" fill="#555">bourgeon terminal →</text>`;
+    s += `<foreignObject x="${cx-50}" y="${cy+ry+14}" width="100" height="32">
+            <select xmlns="http://www.w3.org/1999/xhtml" class="fo-select" onchange="setTerm(${i}, this.value)">
+              ${optList(c.terminal, true, 'arrêt ✕')}</select></foreignObject>`;
+
+    // flèche de transition terminale vers la cible (si adjacente à droite : flèche directe)
+    if (c.terminal === i + 2) {
+      const x1 = cx + rx, x2 = cxOf(i+1) - rx;
+      s += `<path d="M${x1+4},${cy} L${x2-4},${cy}" stroke="#444" stroke-width="2" marker-end="url(#arrT)"/>`;
+      s += `<text x="${(x1+x2)/2}" y="${cy-8}" text-anchor="middle" font-size="12" fill="#333" font-weight="600">T</text>`;
+    } else if (c.terminal > 0) {
+      // cible non adjacente : courbe sous les ellipses
+      const j = c.terminal - 1, x1 = cx, x2 = cxOf(j);
+      const yb = cy + ry + 60;
+      s += `<path d="M${x1},${cy+ry+46} C${x1},${yb} ${x2},${yb} ${x2},${cy+ry+46}"
+              fill="none" stroke="#444" stroke-width="1.8" marker-end="url(#arrT)"/>`;
+    }
+  }
+
+  s += `</svg>`;
+  document.getElementById('svgAut').outerHTML =
+    s.replace('<svg ', '<svg id="svgAut" preserveAspectRatio="xMinYMid meet" ');
+}
+
+// ════════════════════════════════════════════
+//  SIMULATION : construction de l'arborescence
+// ════════════════════════════════════════════
+let nodeCount = 0;
+
+function buildAxis(pa, birthCA, maxCA) {
+  if (pa === 0 || pa > state.numPA || nodeCount > MAX_NODES) return null;
+  const c = state.pa[pa - 1];
+  const axis = { pa, phytomers: [], continuation: null };
+
+  for (let age = 1; age <= c.macro; age++) {
+    const ca = birthCA + age;
+    if (ca > maxCA) break;
+    for (let m = 0; m < c.micro; m++) {
+      if (nodeCount++ > MAX_NODES) break;
+      const axillary = c.axillary > 0 ? buildAxis(c.axillary, ca, maxCA) : null;
+      axis.phytomers.push({ axillary });
+    }
+    if (nodeCount > MAX_NODES) break;
+  }
+
+  const termCA = birthCA + c.macro;
+  if (c.terminal > 0 && termCA < maxCA)
+    axis.continuation = buildAxis(c.terminal, termCA, maxCA);
+
+  return axis;
+}
+
+// ── mise en page : alternance gauche/droite pour un arbre équilibré ──
+function layoutAxis(axis, x, y, angle, edges) {
+  const segLen = SEG_LEN[Math.min(axis.pa - 1, SEG_LEN.length - 1)];
+  const rad = angle * Math.PI / 180;
+  let cx = x, cy = y, k = 0;
+
+  const walk = (phs) => {
+    for (const ph of phs) {
+      const nx = cx + Math.sin(rad) * segLen;
+      const ny = cy - Math.cos(rad) * segLen;
+      edges.push({ x1: cx, y1: cy, x2: nx, y2: ny, pa: axis.pa });
+      if (ph.axillary) {
+        const side = (k % 2 === 0) ? -1 : 1;       // alternance => équilibre
+        const delta = BR_ANGLE[Math.min(ph.axillary.pa - 1, BR_ANGLE.length - 1)];
+        layoutAxis(ph.axillary, nx, ny, angle + side * delta, edges);
+        k++;
+      }
+      cx = nx; cy = ny;
+    }
+  };
+  walk(axis.phytomers);
+  if (axis.continuation) layoutAxis(axis.continuation, cx, cy, angle, edges);
+}
+
+// ════════════════════════════════════════════
+//  RENDU DE LA PLANTE
+// ════════════════════════════════════════════
+function renderPlant(maxCA) {
+  const svg = document.getElementById('svgPlant');
+  nodeCount = 0;
+  const root = buildAxis(1, 0, maxCA);
+
+  document.getElementById('info').textContent =
+    nodeCount > MAX_NODES ? `⚠ tronqué (>${MAX_NODES} phytomères)`
+                          : `${nodeCount} phytomère${nodeCount>1?'s':''} · AC = ${maxCA}`;
+
+  if (!root) { svg.innerHTML = ''; return; }
+  const edges = [];
+  layoutAxis(root, 0, 0, 0, edges);
+  if (!edges.length) { svg.innerHTML = ''; return; }
+
+  let minX=0, maxX=0, minY=0;
+  for (const e of edges) {
+    minX = Math.min(minX, e.x1, e.x2); maxX = Math.max(maxX, e.x1, e.x2);
+    minY = Math.min(minY, e.y1, e.y2);
+  }
+  const margin = 26;
+  const sc = Math.min((VB_W-2*margin)/(maxX-minX||1), (VB_H-2*margin)/(-minY||1));
+  const offX = VB_W/2 - (minX+maxX)/2*sc;
+  const offY = VB_H - margin;
+  const tx = v => (v*sc+offX).toFixed(1);
+  const ty = v => (v*sc+offY).toFixed(1);
+
+  let h = '';
+  for (const e of edges) {
+    const w = Math.max(0.4, STROKE[Math.min(e.pa-1, STROKE.length-1)]);
+    h += `<line x1="${tx(e.x1)}" y1="${ty(e.y1)}" x2="${tx(e.x2)}" y2="${ty(e.y2)}"
+            stroke="${PA_COLORS[e.pa-1]}" stroke-width="${w}" stroke-linecap="round"/>`;
+  }
+  svg.innerHTML = h;
+}
+
+// ════════════════════════════════════════════
+//  LÉGENDES
+// ════════════════════════════════════════════
+function renderLegends() {
+  const n = state.numPA;
+  const lp = document.getElementById('legendPlant');
+  lp.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const it = document.createElement('div'); it.className = 'legend-item';
+    it.innerHTML = `<div class="legend-line" style="background:${PA_COLORS[i]};height:${STROKE[i]+1}px"></div> AP${i+1}`;
+    lp.appendChild(it);
+  }
+  document.getElementById('legendAut').innerHTML =
+    `<div class="legend-item"><div class="legend-line" style="background:#444"></div> T : transition terminale</div>
+     <div class="legend-item"><div class="legend-line" style="background:#888"></div> séjours : répétition du macro-état (UC)</div>
+     <div class="legend-item">porteur vertical (AP courant) + porté horizontal (AP axillaire)</div>`;
+}
+
+// ════════════════════════════════════════════
+//  POINT D'ENTRÉE
+// ════════════════════════════════════════════
+function simulate() {
+  syncSlider();
+  document.getElementById('caSlider').value = state.maxCA;
+  document.getElementById('caVal').textContent = state.maxCA;
+  renderPlant(state.maxCA);
+}
+
+initState();
+renderAutomaton();
+renderLegends();
+window.addEventListener('load', simulate);
+</script>
+</body>
+</html>
