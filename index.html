@@ -133,7 +133,7 @@ const PA_LIGHT  = ['#64B5F6','#81C784','#E57373','#FFB74D','#BA68C8'];
 
 const SEG_LEN   = [34, 24, 16, 11, 8];     // longueur d'internode par AP
 const BR_ANGLE  = [0, 52, 44, 38, 32];     // angle de branche / axe parent
-const STROKE    = [4, 2.6, 1.7, 1.1, 0.7];
+const STROKE    = [4.6, 3.3, 2.4, 1.7, 1.2];
 const MAX_NODES = 8000;
 const VB_W = 600, VB_H = 560;
 
@@ -245,16 +245,17 @@ function renderAutomaton() {
           </div>`;
 
     h += `<div class="ap-rows">`;
-    // phytomère sans bourgeon
-    h += `<div class="ap-row">${glyph(pa, 0)}<span class="times">×</span>
-            <input type="number" min="0" max="20" value="${c.bare}" oninput="setBare(${i}, this.value)">
-            <span class="desc">phytomère ne portant rien</span></div>`;
-    // phytomères portant un AP supérieur
+    // Affichage dans l'ordre de l'axe (sommet en haut) : portés du plus jeune (AP i+1)
+    // vers le plus âgé, puis le phytomère nu en bas du cadre.
     for (let j = pa + 1; j <= n; j++) {
       h += `<div class="ap-row">${glyph(pa, j)}<span class="times">×</span>
               <input type="number" min="0" max="20" value="${c.bears[j]||0}" oninput="setBears(${i}, ${j}, this.value)">
               <span class="desc">phytomère portant un bourgeon <b style="color:${PA_COLORS[j-1]}">AP ${j}</b></span></div>`;
     }
+    // phytomère sans bourgeon (base de l'UC)
+    h += `<div class="ap-row">${glyph(pa, 0)}<span class="times">×</span>
+            <input type="number" min="0" max="20" value="${c.bare}" oninput="setBare(${i}, this.value)">
+            <span class="desc">phytomère ne portant rien</span></div>`;
     h += `</div>`;
 
     // transition terminale
@@ -322,7 +323,7 @@ function layoutAxis(axis, x, y, angle, edges, ticks) {
     const ny = cy - Math.cos(rad) * segLen;
     edges.push({ x1: cx, y1: cy, x2: nx, y2: ny, pa: axis.pa });
     // trait de séparation au sommet du phytomère
-    const hl = segLen * (ph.ucEnd ? 0.34 : 0.20);
+    const hl = segLen * (ph.ucEnd ? 0.20 : 0.12);
     ticks.push({ x1: nx - perpX*hl, y1: ny - perpY*hl,
                  x2: nx + perpX*hl, y2: ny + perpY*hl, uc: !!ph.ucEnd });
     if (ph.axillary) {
